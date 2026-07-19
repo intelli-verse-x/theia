@@ -5,7 +5,7 @@
 // *****************************************************************************
 
 import { expect } from 'chai';
-import { HERMES_COMMAND_IDS, HERMES_PROTOCOL_VERSION } from './common/hermes-protocol';
+import { HERMES_COMMAND_IDS, HERMES_PROTOCOL_VERSION, HermesBridgeStatus } from './common/hermes-protocol';
 import { HermesBridgeServerImpl } from './node/hermes-bridge-server';
 
 class TestHermesBridgeServer extends HermesBridgeServerImpl {
@@ -15,6 +15,12 @@ class TestHermesBridgeServer extends HermesBridgeServerImpl {
 
     detail(): string {
         return this.current.detail;
+    }
+
+    awaitHandshake(requestId: string): Promise<unknown> {
+        return new Promise(resolve => {
+            this.pending.set(requestId, { resolve, timeout: setTimeout(() => undefined, 1000) });
+        });
     }
 }
 
@@ -38,5 +44,22 @@ describe('Hermes bridge contract', () => {
         const oversized = new TestHermesBridgeServer();
         oversized.consumeFrame('x'.repeat(1024 * 1024 + 1));
         expect(oversized.detail()).to.equal('Hermes broker frame exceeds the 1 MiB limit.');
+    });
+
+    it('accepts the exact Desktop handshake response schema', async () => {
+        const server = new TestHermesBridgeServer();
+        const requestId = '9d89f8bc-0e78-6690-fb5e-63de64826a14';
+        const status: HermesBridgeStatus = {
+            connected: true,
+            compatible: true,
+            protocolVersion: HERMES_PROTOCOL_VERSION,
+            identity: { sessionId: 'session', windowId: 'window', workspaceCanonicalPath: '/workspace' },
+            route: { route: 'local', localOnly: true, detail: 'Local route.' },
+            trust: 'restricted',
+            detail: 'Authenticated Hermes Desktop broker connected.'
+        };
+        const response = server.awaitHandshake(requestId);
+        server.consumeFrame(`${JSON.stringify({ protocolVersion: 1, requestId, payload: status })}\n`);
+        expect(await response).to.deep.equal(status);
     });
 });

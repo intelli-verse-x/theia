@@ -16,7 +16,7 @@ The fork's `upstream` remote is fetched and downstream changes are rebased or me
 
 ## Security boundary
 
-The `@theia/hermes-bridge` backend reads a per-launch endpoint and token from its process environment, authenticates protocol v1 with request ID and expiry, and exposes only typed frontend RPC. The extension can submit selected context and observe route/approval state. It cannot read provider keys, change routing/local-only policy, approve actions, or execute model shell/file/computer-use operations.
+The `@theia/hermes-bridge` backend reads a per-launch endpoint and 256-bit token from its process environment, authenticates protocol v1 with request ID and expiry, and exposes only typed frontend RPC. Hermes Desktop creates an unpredictable endpoint, sets Unix sockets to mode `0600`, and verifies the token with a constant-time comparison before accepting any capability; Windows uses a per-launch named pipe. The bridge validates bounded response schemas and exposes only the fixed capabilities declared in `hermes-protocol.ts`. The extension can submit selected context and observe route/approval state. It cannot read provider keys, change routing/local-only policy, approve actions, or execute model shell/file/computer-use operations.
 
 Voice requests use the same Hermes session and are rejected as approval input. Restricted workspaces cannot submit WorkspaceEdit reviews. Actual edits, terminal commands, computer use, git mutations, and worktree operations stay behind Hermes Desktop's structured approval broker.
 

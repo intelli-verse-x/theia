@@ -22,6 +22,30 @@ const MAX_PROMPTS_PER_WINDOW = 30;
 const RATE_WINDOW_MS = 10_000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 const LAUNCH_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isBridgeStatus(value: unknown): value is HermesBridgeStatus {
+    if (!isRecord(value) || !isRecord(value.route)) {
+        return false;
+    }
+    const identity = value.identity;
+    return typeof value.connected === 'boolean'
+        && typeof value.compatible === 'boolean'
+        && value.protocolVersion === HERMES_PROTOCOL_VERSION
+        && (identity === undefined || (isRecord(identity)
+            && typeof identity.sessionId === 'string'
+            && typeof identity.windowId === 'string'
+            && typeof identity.workspaceCanonicalPath === 'string'))
+        && ['local', 'cloud', 'offline'].includes(String(value.route.route))
+        && typeof value.route.localOnly === 'boolean'
+        && typeof value.route.detail === 'string'
+        && ['restricted', 'trusted'].includes(String(value.trust))
+        && typeof value.detail === 'string';
+}
 
 @injectable()
 export class HermesBridgeServerImpl implements HermesBridgeServer {
@@ -82,9 +106,9 @@ export class HermesBridgeServerImpl implements HermesBridgeServer {
                 });
             });
             socket.on('data', data => this.consume(data.toString()));
-            socket.once('error', error => {
+            socket.once('error', () => {
                 socket.destroy();
-                this.settlePending(requestId, this.disconnectedStatus(error.message));
+                this.settlePending(requestId, this.disconnectedStatus('Hermes Desktop connection failed.'));
             });
             socket.once('close', () => {
                 this.socket = undefined;
@@ -154,24 +178,41 @@ export class HermesBridgeServerImpl implements HermesBridgeServer {
                 this.protocolFailure('Hermes broker message rate limit exceeded.');
                 return;
             }
-            let message: { requestId?: unknown; payload?: { kind?: unknown; status?: HermesBridgeStatus } };
+            let message: unknown;
             try {
                 message = JSON.parse(raw);
             } catch {
                 this.protocolFailure('Hermes broker sent malformed JSON.');
                 return;
             }
-            if (typeof message.requestId !== 'string' || message.requestId.length > 128 || !message.payload || typeof message.payload.kind !== 'string') {
+            if (!isRecord(message)
+                || typeof message.requestId !== 'string'
+                || !REQUEST_ID_PATTERN.test(message.requestId)
+                || !isRecord(message.payload)) {
                 this.protocolFailure('Hermes broker sent an invalid protocol message.');
                 return;
             }
             const pending = this.pending.get(message.requestId);
             if (pending) {
+                if (!isBridgeStatus(message.payload)) {
+                    this.protocolFailure('Hermes broker sent an invalid handshake response.');
+                    return;
+                }
                 this.settlePending(message.requestId, message.payload);
-            } else if (message.payload?.kind === 'status' && message.payload.status) {
+            } else if (message.payload.kind === 'status' && isBridgeStatus(message.payload.status)) {
                 this.update(message.payload.status);
-            } else if (message.payload?.kind === 'prompt-event') {
-                this.client?.onPromptEvent(message.payload as { requestId: string; type: string; text?: string });
+            } else if (message.payload.kind === 'prompt-event'
+                && typeof message.payload.type === 'string'
+                && (message.payload.text === undefined
+                    || (typeof message.payload.text === 'string' && message.payload.text.length <= MAX_FRAME_BYTES))) {
+                this.client?.onPromptEvent({
+                    requestId: message.requestId,
+                    type: message.payload.type,
+                    ...(typeof message.payload.text === 'string' ? { text: message.payload.text } : {})
+                });
+            } else {
+                this.protocolFailure('Hermes broker sent an unsupported protocol message.');
+                return;
             }
         }
     }
