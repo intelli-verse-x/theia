@@ -16,6 +16,8 @@ import {
     HermesBridgeStatus
 } from '../common/hermes-protocol';
 
+const MAX_SELECTION_CHARACTERS = 50_000;
+
 export namespace HermesCommands {
     export const ASK_SELECTION: Command = { id: HERMES_COMMAND_IDS[0], label: 'Hermes: Ask About Selection' };
     export const AGENT_WINDOW: Command = { id: HERMES_COMMAND_IDS[1], label: 'Hermes: Agent Session' };
@@ -50,7 +52,11 @@ export class HermesBridgeContribution implements CommandContribution, FrontendAp
                     return this.messages.info('Open an editor and select context first.');
                 }
                 const selection = current.editor.selection;
-                const text = current.editor.document.getText(selection).slice(0, 50000);
+                const selectionLength = current.editor.document.offsetAt(selection.end) - current.editor.document.offsetAt(selection.start);
+                if (selectionLength > MAX_SELECTION_CHARACTERS) {
+                    return this.messages.warn(`Select at most ${MAX_SELECTION_CHARACTERS.toLocaleString()} characters for Hermes context.`);
+                }
+                const text = current.editor.document.getText(selection);
                 await this.server.submitPrompt({
                     requestId: crypto.randomUUID(),
                     text: 'Help me with the selected editor context.',

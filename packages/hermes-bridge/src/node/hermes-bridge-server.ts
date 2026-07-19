@@ -16,12 +16,21 @@ import {
     HermesWorkspaceEditReview
 } from '../common/hermes-protocol';
 
+const MAX_FRAME_BYTES = 1024 * 1024;
+const MAX_MESSAGES_PER_WINDOW = 120;
+const MAX_PROMPTS_PER_WINDOW = 30;
+const RATE_WINDOW_MS = 10_000;
+const HANDSHAKE_TIMEOUT_MS = 30_000;
+const LAUNCH_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
 @injectable()
 export class HermesBridgeServerImpl implements HermesBridgeServer {
     protected client: HermesBridgeClient | undefined;
     protected socket: net.Socket | undefined;
     protected buffer = '';
-    protected pending = new Map<string, (value: unknown) => void>();
+    protected pending = new Map<string, { resolve: (value: unknown) => void; timeout: NodeJS.Timeout }>();
+    protected incomingMessageTimes: number[] = [];
+    protected promptTimes: number[] = [];
     protected current: HermesBridgeStatus = {
         connected: false,
         compatible: false,
@@ -40,10 +49,10 @@ export class HermesBridgeServerImpl implements HermesBridgeServer {
     }
 
     async reconnect(): Promise<HermesBridgeStatus> {
-        this.socket?.destroy();
+        this.disconnect();
         const endpoint = process.env.HERMES_STUDIO_ENDPOINT;
         const token = process.env.HERMES_STUDIO_TOKEN;
-        if (!endpoint || !token) {
+        if (!endpoint || !token || !LAUNCH_TOKEN_PATTERN.test(token)) {
             return this.update({ ...this.current, connected: false, compatible: false, detail: 'Authenticated launch environment is missing.' });
         }
         const requestId = randomUUID();
@@ -73,12 +82,20 @@ export class HermesBridgeServerImpl implements HermesBridgeServer {
                 });
             });
             socket.on('data', data => this.consume(data.toString()));
-            socket.once('error', error => resolve(this.update({
-                ...this.current,
-                connected: false,
-                detail: error.message
-            })));
-            this.pending.set(requestId, value => resolve(this.update(value as HermesBridgeStatus)));
+            socket.once('error', error => {
+                socket.destroy();
+                this.settlePending(requestId, this.disconnectedStatus(error.message));
+            });
+            socket.once('close', () => {
+                this.socket = undefined;
+                this.buffer = '';
+                this.settlePending(requestId, this.disconnectedStatus('Hermes Desktop connection closed.'));
+            });
+            const timeout = setTimeout(() => {
+                socket.destroy();
+                this.settlePending(requestId, this.disconnectedStatus('Hermes Desktop handshake timed out.'));
+            }, HANDSHAKE_TIMEOUT_MS);
+            this.pending.set(requestId, { resolve: value => resolve(this.update(value as HermesBridgeStatus)), timeout });
         });
     }
 
@@ -91,6 +108,9 @@ export class HermesBridgeServerImpl implements HermesBridgeServer {
         }
         if (this.current.route.localOnly && this.current.route.route === 'cloud') {
             throw new Error('Cloud is forbidden in local-only mode.');
+        }
+        if (!this.withinRateLimit(this.promptTimes, MAX_PROMPTS_PER_WINDOW)) {
+            throw new Error('Hermes prompt rate limit exceeded.');
         }
         this.write({
             protocolVersion: HERMES_PROTOCOL_VERSION,
@@ -119,19 +139,39 @@ export class HermesBridgeServerImpl implements HermesBridgeServer {
         for (;;) {
             const newline = this.buffer.indexOf('\n');
             if (newline < 0) {
+                if (Buffer.byteLength(this.buffer, 'utf8') > MAX_FRAME_BYTES) {
+                    this.protocolFailure('Hermes broker frame exceeds the 1 MiB limit.');
+                }
                 return;
             }
             const raw = this.buffer.slice(0, newline);
             this.buffer = this.buffer.slice(newline + 1);
-            const message = JSON.parse(raw);
+            if (Buffer.byteLength(raw, 'utf8') > MAX_FRAME_BYTES) {
+                this.protocolFailure('Hermes broker frame exceeds the 1 MiB limit.');
+                return;
+            }
+            if (!this.withinRateLimit(this.incomingMessageTimes, MAX_MESSAGES_PER_WINDOW)) {
+                this.protocolFailure('Hermes broker message rate limit exceeded.');
+                return;
+            }
+            let message: { requestId?: unknown; payload?: { kind?: unknown; status?: HermesBridgeStatus } };
+            try {
+                message = JSON.parse(raw);
+            } catch {
+                this.protocolFailure('Hermes broker sent malformed JSON.');
+                return;
+            }
+            if (typeof message.requestId !== 'string' || message.requestId.length > 128 || !message.payload || typeof message.payload.kind !== 'string') {
+                this.protocolFailure('Hermes broker sent an invalid protocol message.');
+                return;
+            }
             const pending = this.pending.get(message.requestId);
             if (pending) {
-                this.pending.delete(message.requestId);
-                pending(message.payload);
-            } else if (message.payload?.kind === 'status') {
+                this.settlePending(message.requestId, message.payload);
+            } else if (message.payload?.kind === 'status' && message.payload.status) {
                 this.update(message.payload.status);
             } else if (message.payload?.kind === 'prompt-event') {
-                this.client?.onPromptEvent(message.payload);
+                this.client?.onPromptEvent(message.payload as { requestId: string; type: string; text?: string });
             }
         }
     }
@@ -147,5 +187,49 @@ export class HermesBridgeServerImpl implements HermesBridgeServer {
         this.current = status;
         this.client?.onStatus(status);
         return status;
+    }
+
+    protected withinRateLimit(timestamps: number[], limit: number): boolean {
+        const now = Date.now();
+        while (timestamps.length > 0 && timestamps[0] <= now - RATE_WINDOW_MS) {
+            timestamps.shift();
+        }
+        if (timestamps.length >= limit) {
+            return false;
+        }
+        timestamps.push(now);
+        return true;
+    }
+
+    protected settlePending(requestId: string, value: unknown): void {
+        const pending = this.pending.get(requestId);
+        if (!pending) {
+            return;
+        }
+        clearTimeout(pending.timeout);
+        this.pending.delete(requestId);
+        pending.resolve(value);
+    }
+
+    protected disconnectedStatus(detail: string): HermesBridgeStatus {
+        return { ...this.current, connected: false, compatible: false, detail };
+    }
+
+    protected protocolFailure(detail: string): void {
+        this.update(this.disconnectedStatus(detail));
+        this.disconnect();
+    }
+
+    protected disconnect(): void {
+        this.socket?.destroy();
+        this.socket = undefined;
+        this.buffer = '';
+        this.incomingMessageTimes = [];
+        this.promptTimes = [];
+        for (const [requestId, pending] of this.pending) {
+            clearTimeout(pending.timeout);
+            this.pending.delete(requestId);
+            pending.resolve(this.disconnectedStatus('Hermes Desktop connection closed.'));
+        }
     }
 }
