@@ -1,0 +1,46 @@
+name: Hermes Studio product
+
+on:
+  pull_request:
+    paths:
+      - "packages/hermes-bridge/**"
+      - "examples/hermes-studio/**"
+      - "examples/ovsx-router-config.json"
+      - "doc/HermesStudio.md"
+      - ".github/workflows/hermes-studio.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  product:
+    name: Product contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022, ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max_old_space_size=4096
+      - run: npm run compile --workspace @theia/hermes-bridge
+      - run: npm run lint --workspace @theia/hermes-bridge
+      - run: npm run test --workspace @theia/hermes-bridge
+      - run: npm run build --workspace @theia/hermes-studio
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+      - name: Verify provenance and Open VSX
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          node -e "const c=require('./examples/ovsx-router-config.json'); if(c.registries.public!=='https://open-vsx.org/') process.exit(1)"
+          if rg -i 'marketplace\.visualstudio|visual studio code' examples/hermes-studio packages/hermes-bridge; then exit 1; fi

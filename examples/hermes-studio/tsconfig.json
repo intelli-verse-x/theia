@@ -1,0 +1,73 @@
+{
+  "extends": "../../configs/base.tsconfig",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "lib/test"
+  },
+  "include": [],
+  "references": [
+    {
+      "path": "../../dev-packages/cli"
+    },
+    {
+      "path": "../../packages/bulk-edit"
+    },
+    {
+      "path": "../../packages/core"
+    },
+    {
+      "path": "../../packages/debug"
+    },
+    {
+      "path": "../../packages/editor"
+    },
+    {
+      "path": "../../packages/file-search"
+    },
+    {
+      "path": "../../packages/filesystem"
+    },
+    {
+      "path": "../../packages/hermes-bridge"
+    },
+    {
+      "path": "../../packages/markers"
+    },
+    {
+      "path": "../../packages/messages"
+    },
+    {
+      "path": "../../packages/monaco"
+    },
+    {
+      "path": "../../packages/navigator"
+    },
+    {
+      "path": "../../packages/plugin-ext-vscode"
+    },
+    {
+      "path": "../../packages/preferences"
+    },
+    {
+      "path": "../../packages/process"
+    },
+    {
+      "path": "../../packages/scm"
+    },
+    {
+      "path": "../../packages/search-in-workspace"
+    },
+    {
+      "path": "../../packages/task"
+    },
+    {
+      "path": "../../packages/terminal"
+    },
+    {
+      "path": "../../packages/vsx-registry"
+    },
+    {
+      "path": "../../packages/workspace"
+    }
+  ]
+}
