@@ -32,7 +32,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max_old_space_size=4096
-      - run: npm run compile --workspace @theia/hermes-bridge
+      - name: Compile bridge dependency graph
+        run: npx lerna run compile --scope @theia/hermes-bridge --include-dependencies --concurrency 4
       - run: npm run lint --workspace @theia/hermes-bridge
       - run: npm run test --workspace @theia/hermes-bridge
       - run: npm run build --workspace @theia/hermes-studio
