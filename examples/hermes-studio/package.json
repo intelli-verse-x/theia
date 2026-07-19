@@ -1,0 +1,71 @@
+{
+  "private": true,
+  "name": "@theia/hermes-studio",
+  "productName": "Hermes Studio",
+  "version": "0.1.0",
+  "main": "lib/backend/electron-main.js",
+  "license": "EPL-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0",
+  "theia": {
+    "target": "electron",
+    "frontend": {
+      "config": {
+        "applicationName": "Hermes Studio",
+        "reloadOnReconnect": true,
+        "defaultTheme": {
+          "light": "light",
+          "dark": "dark"
+        },
+        "electron": {
+          "splashScreenOptions": {
+            "content": "resources/hermes-studio-mark.svg",
+            "height": 80
+          }
+        }
+      }
+    },
+    "backend": {
+      "config": {
+        "frontendConnectionTimeout": 30000,
+        "configureProxyFromPreferences": true,
+        "singleInstance": true
+      }
+    }
+  },
+  "dependencies": {
+    "@theia/bulk-edit": "1.73.0",
+    "@theia/core": "1.73.0",
+    "@theia/debug": "1.73.0",
+    "@theia/editor": "1.73.0",
+    "@theia/electron": "1.73.0",
+    "@theia/file-search": "1.73.0",
+    "@theia/filesystem": "1.73.0",
+    "@theia/hermes-bridge": "1.73.0",
+    "@theia/markers": "1.73.0",
+    "@theia/messages": "1.73.0",
+    "@theia/monaco": "1.73.0",
+    "@theia/navigator": "1.73.0",
+    "@theia/plugin-ext-vscode": "1.73.0",
+    "@theia/preferences": "1.73.0",
+    "@theia/process": "1.73.0",
+    "@theia/scm": "1.73.0",
+    "@theia/search-in-workspace": "1.73.0",
+    "@theia/task": "1.73.0",
+    "@theia/terminal": "1.73.0",
+    "@theia/vsx-registry": "1.73.0",
+    "@theia/workspace": "1.73.0"
+  },
+  "devDependencies": {
+    "@theia/cli": "1.73.0",
+    "electron": "42.3.0"
+  },
+  "scripts": {
+    "build": "theiaext build && npm run -s bundle",
+    "bundle": "npm run rebuild && theia build --mode development",
+    "clean": "theiaext clean",
+    "compile": "tsc -b",
+    "package": "theia build --mode production && theia electron package",
+    "rebuild": "theia rebuild:electron --cacheRoot ../..",
+    "start": "theia start --plugins=local-dir:../../plugins --ovsx-router-config=../ovsx-router-config.json",
+    "start:debug": "npm run -s start -- --log-level=debug --remote-debugging-port=9223"
+  }
+}
