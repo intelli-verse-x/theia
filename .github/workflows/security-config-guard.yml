@@ -1,0 +1,45 @@
+name: Security configuration guard
+on:
+  pull_request:
+  push:
+    branches: [master]
+permissions:
+  contents: read
+jobs:
+  static-config-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Reject the known injected configuration loader without executing source
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import pathlib, subprocess
+          markers = (b'A9-2785-1', b'ETH_RPC_URL', b'windowsHide')
+          def known_loader(data):
+              return all(marker in data for marker in markers)
+          assert not known_loader(b'module.exports = {};')
+          assert not known_loader(markers[0])
+          assert known_loader(b' '.join(markers))
+          files = subprocess.check_output(['git', 'ls-files', '-z']).split(b'\0')
+          scanned = 0
+          for raw in files:
+              if not raw:
+                  continue
+              path = pathlib.Path(raw.decode())
+              if 'config' not in path.name or path.suffix not in ('.js', '.cjs', '.mjs', '.ts'):
+                  continue
+              scanned += 1
+              if known_loader(path.read_bytes()):
+                  raise SystemExit('Known injected loader marker conjunction: ' + str(path))
+          assert scanned >= 3, 'Expected configuration scope was not scanned'
+          print(f'Statically scanned {scanned} tracked JavaScript/TypeScript configurations')
+          PYTHON
+      - name: Parse cleaned Webpack configurations without loading them
+        run: |
+          node --check examples/browser-only/webpack.config.js
+          node --check examples/browser/webpack.config.js
+          node --check examples/electron/webpack.config.js
